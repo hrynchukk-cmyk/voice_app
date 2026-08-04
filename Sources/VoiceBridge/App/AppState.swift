@@ -21,6 +21,8 @@ final class AppState: ObservableObject {
     @Published var isBypassed = false { didSet { engine.isBypassed = isBypassed } }
     @Published var inputGain: Double = 1.0 { didSet { engine.inputGain = Float(inputGain) } }
     @Published var outputGain: Double = 1.0 { didSet { engine.limiter.outputGain = Float(outputGain) } }
+    /// Built-in voice changer amount: <1 deeper, >1 higher, 1 unchanged.
+    @Published var voicePitch: Double = 0.72 { didSet { engine.nativeConverter.pitchRatio = Float(voicePitch) } }
 
     // Session timing for the ACTIVE indicator
     @Published private(set) var sessionStart: Date?
@@ -35,6 +37,7 @@ final class AppState: ObservableObject {
     init() {
         selectedInput = devices.defaultInput()
         selectedOutput = devices.virtualOutput() ?? devices.outputDevices.first
+        engine.nativeConverter.pitchRatio = Float(voicePitch)
 
         // React to hot-plug: if our input vanished, tell the engine.
         devices.onDevicesChanged = { [weak self] in
@@ -62,8 +65,9 @@ final class AppState: ObservableObject {
     var isRunning: Bool { engine.status.isLive }
 
     func startConversion() {
-        // Load the selected authorized model into the converter (Phase 3). In
-        // this scaffold we run the passthrough converter, so conversion == dry.
+        // By default the engine runs the built-in native voice changer, so Start
+        // audibly transforms the voice immediately. Selecting an authorized
+        // model (Phase 3) would swap in an ML converter via engine.setConverter.
         engine.start(inputDevice: selectedInput, outputDevice: selectedOutput)
     }
 

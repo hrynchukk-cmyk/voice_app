@@ -40,6 +40,7 @@ struct ControlsView: View {
             HStack(spacing: 24) {
                 gainSlider("Input gain", value: $state.inputGain)
                 gainSlider("Output gain", value: $state.outputGain)
+                voiceSlider
             }
 
             HStack(spacing: 24) {
@@ -66,6 +67,22 @@ struct ControlsView: View {
         .buttonStyle(.borderedProminent)
         .tint(tint)
         .accessibilityLabel(title)
+    }
+
+    /// Built-in voice changer: deeper ⟷ higher.
+    private var voiceSlider: some View {
+        VStack(alignment: .leading) {
+            Text("Voice: \(voiceLabel)")
+                .font(.caption).foregroundStyle(.secondary)
+            Slider(value: $state.voicePitch, in: 0.5...1.6)
+        }
+    }
+
+    private var voiceLabel: String {
+        let p = state.voicePitch
+        if p < 0.95 { return String(format: "deeper (%.2f×)", p) }
+        if p > 1.05 { return String(format: "higher (%.2f×)", p) }
+        return "natural"
     }
 
     private func gainSlider(_ label: String, value: Binding<Double>) -> some View {

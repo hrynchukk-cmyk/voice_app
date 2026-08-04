@@ -48,7 +48,15 @@ final class AudioEngine: ObservableObject {
 
     // MARK: Collaborators
     private let vad = VoiceActivityDetector()
-    private var converter: VoiceConverter = PassthroughConverter()
+    /// The built-in native voice changer, used by default so Start immediately
+    /// transforms the voice with no model/Python/driver. Swap via setConverter.
+    let nativeConverter = NativeVoiceConverter()
+    private var converter: VoiceConverter
+
+    init() {
+        // Eager (non-lazy) so the worker thread and the UI never race a lazy init.
+        converter = nativeConverter
+    }
 
     // MARK: AVAudioEngine graph
     private let engine = AVAudioEngine()

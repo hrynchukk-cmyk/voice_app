@@ -26,9 +26,13 @@ This repository is a **first-version scaffold + design**. It contains:
 - Working, idiomatic Swift/SwiftUI example code for **Phase 1**: microphone
   capture, level metering, clipping detection, mute, and bypass, with a
   real-time-safe processing pipeline.
+- A **built-in native voice changer** (`NativeVoiceConverter`, a real-time
+  pitch/formant shifter) wired in as the default converter, so **Start
+  immediately transforms your voice** — no ML model, Python, or driver needed
+  to hear it. This changes voice *character*, not a specific person's identity.
 - Protocol-level stubs for the parts that require a device/model/driver present
-  on real hardware: the voice-conversion engine (Phase 3) and the virtual
-  microphone driver (Phase 2).
+  on real hardware: **identity** voice conversion toward an authorized speaker
+  (Phase 3, ML) and the virtual microphone driver (Phase 2).
 
 The Swift code targets **macOS 13+** and Apple Silicon. It has **not** been
 compiled inside this environment (no Xcode/macOS here) — treat it as a
