@@ -145,7 +145,10 @@ final class AudioDeviceManager: ObservableObject {
 
     // MARK: Hot-plug listener
 
-    private var listenerBlock: AudioObjectPropertyListenerBlock?
+    // Written on the main actor (installListener), read from the nonisolated
+    // deinit (removeListener). That install-once / remove-at-dealloc pattern is
+    // not concurrent access, so the unchecked annotation is safe here.
+    private nonisolated(unsafe) var listenerBlock: AudioObjectPropertyListenerBlock?
 
     private func installListener() {
         var address = AudioObjectPropertyAddress(
@@ -163,7 +166,7 @@ final class AudioDeviceManager: ObservableObject {
             AudioObjectID(kAudioObjectSystemObject), &address, DispatchQueue.main, block)
     }
 
-    private func removeListener() {
+    private nonisolated func removeListener() {
         guard let block = listenerBlock else { return }
         var address = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyDevices,
