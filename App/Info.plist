@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  A minimal Info.plist. When you use XcodeGen (project.yml), the keys under
+  `info.properties` are merged in automatically, so this file is mostly a
+  human-readable reference. If you build without XcodeGen, keep these keys.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDisplayName</key>
+    <string>VoiceBridge</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>13.0</string>
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.utilities</string>
+
+    <!-- Required: shown in the macOS microphone-permission prompt. -->
+    <key>NSMicrophoneUsageDescription</key>
+    <string>VoiceBridge needs the microphone to capture your speech for local, consent-based voice conversion. Audio is processed on this Mac and is not uploaded.</string>
+</dict>
+</plist>

@@ -1,0 +1,50 @@
+# XcodeGen spec — run `xcodegen generate` to produce VoiceBridge.xcodeproj
+# https://github.com/yonaskolb/XcodeGen  (MIT)
+name: VoiceBridge
+options:
+  bundleIdPrefix: com.example
+  deploymentTarget:
+    macOS: "13.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    MACOSX_DEPLOYMENT_TARGET: "13.0"
+    # Apple Silicon first; keep x86_64 for Intel test machines if you need it.
+    ARCHS: "$(ARCHS_STANDARD)"
+    CODE_SIGN_STYLE: Automatic
+    # Fill these in Xcode's Signing & Capabilities, or set here:
+    # DEVELOPMENT_TEAM: XXXXXXXXXX
+
+targets:
+  VoiceBridge:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources/VoiceBridge
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleDisplayName: VoiceBridge
+        LSMinimumSystemVersion: "13.0"
+        NSMicrophoneUsageDescription: >-
+          VoiceBridge needs the microphone to capture your speech for local,
+          consent-based voice conversion. Audio is processed on this Mac and is
+          not uploaded.
+        NSHumanReadableCopyright: ""
+    entitlements:
+      path: App/VoiceBridge.entitlements
+      properties:
+        com.apple.security.app-sandbox: true
+        com.apple.security.device.audio-input: true
+        # Read/write access to user-selected voice-model files during import.
+        com.apple.security.files.user-selected.read-write: true
+        # No outbound network client by default — conversion is local.
+        # Add com.apple.security.network.client ONLY if you later add an
+        # explicit, user-visible online feature.
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.VoiceBridge
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.utilities
+        ENABLE_HARDENED_RUNTIME: true

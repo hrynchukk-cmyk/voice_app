@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  App Sandbox entitlements. Rationale for each key is in
+  docs/PERMISSIONS_AND_SIGNING.md.
+
+  Note: there is NO network entitlement here on purpose. VoiceBridge processes
+  audio locally by default. Do not add com.apple.security.network.client unless
+  you introduce an explicit, disclosed online feature.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.app-sandbox</key>
+    <true/>
+
+    <!-- Capture from the built-in / selected microphone. -->
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
+
+    <!-- Import authorized voice recordings the user explicitly selects. -->
+    <key>com.apple.security.files.user-selected.read-write</key>
+    <true/>
+</dict>
+</plist>

@@ -1,0 +1,41 @@
+# Xcode / macOS
+*.xcodeproj/*
+!*.xcodeproj/project.pbxproj
+*.xcworkspace
+xcuserdata/
+DerivedData/
+build/
+*.xcuserstate
+.DS_Store
+
+# XcodeGen generates the project; keep the spec, ignore the output
+VoiceBridge.xcodeproj/
+
+# Swift Package Manager
+.build/
+.swiftpm/
+
+# Python ML backend
+ml/.venv/
+ml/__pycache__/
+ml/**/__pycache__/
+*.pyc
+
+# Local voice models and user data must NEVER be committed
+# (they belong in the app-managed Application Support folder, not the repo)
+/VoiceModels/
+*.ckpt
+*.pth
+*.onnx
+*.mlmodel
+*.mlmodelc
+*.wav
+*.aiff
+*.m4a
+*.flac
+
+# Secrets / signing
+*.p12
+*.mobileprovision
+*.provisionprofile
+ExportOptions.plist
