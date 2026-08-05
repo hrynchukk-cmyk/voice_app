@@ -50,13 +50,30 @@ cannot bundle BlackHole (GPL).
 Prototype with **C** → validate the whole pipeline → ship your own signed
 **A** → evaluate **B** for longevity.
 
+## Quick start with BlackHole (path C — works today)
+
+```bash
+brew install blackhole-2ch        # or download the installer from Existential Audio
+```
+
+Then in VoiceBridge:
+1. Pick **BlackHole 2ch** in the *Virtual microphone* dropdown. The app routes
+   converted audio to it (`AudioEngine.setOutputDevice`).
+2. In Zoom/Meet/Teams, choose **BlackHole 2ch** as the microphone.
+
+To **hear yourself** while a meeting also receives the audio, create a
+**Multi-Output Device** (BlackHole + your headphones) in *Audio MIDI Setup* and
+select that as the *Virtual microphone* instead — the app will drive both.
+
 ## What the app already does to support this
-- `AudioDeviceManager.virtualOutput(named:)` finds a device whose name contains
-  "VoiceBridge".
-- `AudioEngine.setDevice(_:isInput:)` points the engine's output AUHAL at the
-  chosen device via `kAudioOutputUnitProperty_CurrentDevice`.
-- `MainView` shows a "Driver not found" hint when no matching device is present
-  and links here.
+- `AudioDeviceManager.virtualOutput()` finds an installed virtual device
+  (BlackHole, VB-Cable, Loopback, Soundflower, or a "VoiceBridge" driver);
+  `isVirtual(_:)` tags the current selection.
+- `AudioEngine.setOutputDevice(_:deviceID:)` points the output engine's AUHAL at
+  the chosen device via `kAudioOutputUnitProperty_CurrentDevice`, with fallback
+  to the system default if it can't be used.
+- `MainView` shows install guidance, a "ready" state when a virtual device is
+  selected, and a hint to select one otherwise.
 
 ## Install / uninstall UX to build (Phase 2)
 - First-run checklist: detect the device, guide install + approval, link to

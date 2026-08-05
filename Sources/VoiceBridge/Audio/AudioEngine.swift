@@ -97,13 +97,12 @@ final class AudioEngine: ObservableObject {
     func start(inputDevice: AudioDevice?, outputDevice: AudioDevice?,
                builtInInput: AudioDevice? = nil, builtInOutput: AudioDevice? = nil) {
         guard !inputEngine.isRunning, !outputEngine.isRunning else { return }
-        // Routing is driven by the macOS system defaults (Sound settings): the
-        // input engine captures the default input, the output engine renders to
-        // the default output. In-app device routing (incl. the virtual mic)
-        // returns in Phase 2; the parameters are kept for that wiring.
-        _ = (inputDevice, outputDevice, builtInInput, builtInOutput)
+        // Input follows the macOS default input; output is routed to the chosen
+        // device (e.g. the BlackHole virtual mic) so other apps can pick it up.
+        // Input-device selection returns with Phase 2 in-app routing.
+        _ = (inputDevice, builtInInput, builtInOutput)
         do {
-            try configureAndStart()
+            try configureAndStart(outputDevice: outputDevice)
             startWorker()
             startUITimer()
             status = .running
@@ -113,7 +112,7 @@ final class AudioEngine: ObservableObject {
         }
     }
 
-    private func configureAndStart() throws {
+    private func configureAndStart(outputDevice: AudioDevice?) throws {
         // --- Input engine: capture the default mic via a tap into inputRing. ---
         let inFormat = inputEngine.inputNode.outputFormat(forBus: 0)
         sampleRate = inFormat.sampleRate > 0 ? inFormat.sampleRate : 48_000
@@ -124,9 +123,10 @@ final class AudioEngine: ObservableObject {
         inputEngine.prepare()
         try inputEngine.start()
 
-        // --- Output engine: render outputRing to the default output. The mono
-        //     source runs at the capture rate; the mixer resamples to the output
-        //     device's rate, so a mic/output sample-rate difference is fine. ---
+        // --- Output engine: render outputRing to the SELECTED output device so
+        //     apps like Zoom can pick it up as a microphone. The mono source
+        //     runs at the capture rate; the mixer resamples to the device rate.
+        //     Fall back to the system default output if the chosen device fails.
         guard let procFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32,
                                              sampleRate: sampleRate,
                                              channels: 1,
@@ -139,8 +139,53 @@ final class AudioEngine: ObservableObject {
         outputEngine.attach(source)
         outputEngine.connect(source, to: outputEngine.mainMixerNode, format: procFormat)
         sourceNode = source
-        outputEngine.prepare()
-        try outputEngine.start()
+
+        // Try the chosen device, then the system default, then no forcing at
+        // all. The first that starts wins, so a bad selection never blocks audio.
+        var startError: Error?
+        func tryStart(force id: AudioDeviceID?) -> Bool {
+            do {
+                if let id { try setOutputDevice(outputEngine, deviceID: id) }
+                outputEngine.prepare()
+                try outputEngine.start()
+                return true
+            } catch {
+                startError = error
+                outputEngine.stop()
+                return false
+            }
+        }
+        if tryStart(force: outputDevice?.id) { return }
+        if tryStart(force: Self.defaultDeviceID(input: false)) { return }
+        if tryStart(force: nil) { return }
+        throw startError ?? NSError(domain: "VoiceBridge", code: -3)
+    }
+
+    /// Point an output-only engine's AUHAL unit at a specific Core Audio device.
+    private func setOutputDevice(_ engine: AVAudioEngine, deviceID: AudioDeviceID) throws {
+        guard let unit = engine.outputNode.audioUnit else {
+            throw NSError(domain: "VoiceBridge", code: -2)
+        }
+        var dev = deviceID
+        let st = AudioUnitSetProperty(unit,
+                                      kAudioOutputUnitProperty_CurrentDevice,
+                                      kAudioUnitScope_Global, 0, &dev,
+                                      UInt32(MemoryLayout<AudioDeviceID>.size))
+        if st != noErr { throw NSError(domain: NSOSStatusErrorDomain, code: Int(st)) }
+    }
+
+    /// The system default input/output device ID, used as a compatible fallback.
+    private static func defaultDeviceID(input: Bool) -> AudioDeviceID? {
+        var address = AudioObjectPropertyAddress(
+            mSelector: input ? kAudioHardwarePropertyDefaultInputDevice
+                             : kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        var id = AudioDeviceID(0)
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        let st = AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &id)
+        return (st == noErr && id != 0) ? id : nil
     }
 
     func stop() {

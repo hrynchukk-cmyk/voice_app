@@ -35,11 +35,7 @@ struct MainView: View {
                                 }
                             }
                             .labelsHidden()
-                            if state.devices.virtualOutput() == nil {
-                                Label("Driver not found", systemImage: "exclamationmark.triangle")
-                                    .font(.caption).foregroundStyle(.orange)
-                                    .help("Install the VoiceBridge virtual audio device — see VirtualDevice/README.md")
-                            }
+                            virtualStatus
                         }
                     }
                     GridRow {
@@ -74,6 +70,24 @@ struct MainView: View {
         .onDisappear { perf.stop() }
         .sheet(isPresented: $showEnrollment) {
             EnrollmentView().environmentObject(state)
+        }
+    }
+
+    /// Live guidance for the virtual-microphone routing.
+    @ViewBuilder private var virtualStatus: some View {
+        if state.devices.virtualOutput() == nil {
+            Label("No virtual device — install BlackHole", systemImage: "exclamationmark.triangle")
+                .font(.caption).foregroundStyle(.orange)
+                .help("Install BlackHole (brew install blackhole-2ch), then pick it here "
+                      + "and select it as your microphone in Zoom/Meet/Teams.")
+        } else if AudioDeviceManager.isVirtual(state.selectedOutput) {
+            Label("Ready — pick this device as your mic in Zoom", systemImage: "checkmark.circle.fill")
+                .font(.caption).foregroundStyle(.green)
+        } else {
+            Label("Select the virtual device to send to meetings", systemImage: "info.circle")
+                .font(.caption).foregroundStyle(.secondary)
+                .help("Choose BlackHole here to route converted audio into meeting apps. "
+                      + "Keep a real output to hear yourself, or use a Multi-Output Device.")
         }
     }
 

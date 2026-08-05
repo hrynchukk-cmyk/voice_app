@@ -65,9 +65,27 @@ final class AudioDeviceManager: ObservableObject {
     /// The built-in speakers, used as an always-present start fallback.
     func builtInOutput() -> AudioDevice? { outputDevices.first(where: { $0.isBuiltIn }) }
 
-    /// Look up a device the "VoiceBridge Microphone" virtual driver, by name.
-    func virtualOutput(named needle: String = "VoiceBridge") -> AudioDevice? {
-        outputDevices.first { $0.name.localizedCaseInsensitiveContains(needle) }
+    /// Names that identify a virtual audio device usable as a "microphone" in
+    /// meeting apps (the app routes converted audio here; the meeting app then
+    /// selects the same device as its mic). A user-made Multi-Output Device that
+    /// includes one of these is matched too.
+    static let virtualDeviceNeedles = ["BlackHole", "VoiceBridge", "VB-Cable",
+                                       "VB-Audio", "Loopback", "Soundflower"]
+
+    /// The first installed virtual output device, if any.
+    func virtualOutput() -> AudioDevice? {
+        for needle in Self.virtualDeviceNeedles {
+            if let d = outputDevices.first(where: { $0.name.localizedCaseInsensitiveContains(needle) }) {
+                return d
+            }
+        }
+        return nil
+    }
+
+    /// True when `device` looks like a virtual audio device we can route into.
+    static func isVirtual(_ device: AudioDevice?) -> Bool {
+        guard let name = device?.name else { return false }
+        return virtualDeviceNeedles.contains { name.localizedCaseInsensitiveContains($0) }
     }
 
     // MARK: Core Audio plumbing
