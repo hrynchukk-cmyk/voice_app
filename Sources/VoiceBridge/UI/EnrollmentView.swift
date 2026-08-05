@@ -18,7 +18,7 @@ struct EnrollmentView: View {
 
     // Build from extensions so we don't depend on specific UTType static members.
     private let allowedTypes: [UTType] =
-        ["wav", "aiff", "aif", "m4a", "flac", "caf"].compactMap { UTType(filenameExtension: $0) }
+        ["wav", "aiff", "aif", "m4a", "mp3", "flac", "caf"].compactMap { UTType(filenameExtension: $0) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -53,7 +53,7 @@ struct EnrollmentView: View {
                     guidance("Minimal music / background noise / reverb")
                     guidance("A variety of phonetic content (varied sentences)")
                     guidance("Consistent microphone distance; avoid clipping")
-                    guidance("Formats: WAV, AIFF, M4A, FLAC")
+                    guidance("Formats: WAV, AIFF, M4A, MP3, FLAC")
                 }
                 .font(.callout)
                 .padding(6)

@@ -68,7 +68,11 @@ final class AppState: ObservableObject {
         // By default the engine runs the built-in native voice changer, so Start
         // audibly transforms the voice immediately. Selecting an authorized
         // model (Phase 3) would swap in an ML converter via engine.setConverter.
-        engine.start(inputDevice: selectedInput, outputDevice: selectedOutput)
+        // The built-in devices are passed as an always-present fallback in case
+        // the chosen output is a stale/phantom device.
+        engine.start(inputDevice: selectedInput, outputDevice: selectedOutput,
+                     builtInInput: devices.builtInInput(),
+                     builtInOutput: devices.builtInOutput())
     }
 
     func stopConversion() {

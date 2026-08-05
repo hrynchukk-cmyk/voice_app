@@ -49,14 +49,21 @@ final class AudioDeviceManager: ObservableObject {
         inputDevices.first
     }
 
-    /// The system default output (the user's active speakers/headphones), else
-    /// the built-in output, else anything — so we never default to a stale or
-    /// unusable device.
+    /// A reliable default output: prefer the built-in speakers (always present
+    /// and always initialisable), then the system default, then anything. We
+    /// avoid defaulting to the system output when it is a stale/phantom device
+    /// (e.g. AirPods that appear via Find My but aren't connected for audio).
     func defaultOutput() -> AudioDevice? {
-        Self.defaultDevice(input: false).flatMap { id in outputDevices.first { $0.id == id } } ??
         outputDevices.first(where: { $0.isBuiltIn }) ??
+        Self.defaultDevice(input: false).flatMap { id in outputDevices.first { $0.id == id } } ??
         outputDevices.first
     }
+
+    /// The built-in microphone, used as an always-present start fallback.
+    func builtInInput() -> AudioDevice? { inputDevices.first(where: { $0.isBuiltIn }) }
+
+    /// The built-in speakers, used as an always-present start fallback.
+    func builtInOutput() -> AudioDevice? { outputDevices.first(where: { $0.isBuiltIn }) }
 
     /// Look up a device the "VoiceBridge Microphone" virtual driver, by name.
     func virtualOutput(named needle: String = "VoiceBridge") -> AudioDevice? {

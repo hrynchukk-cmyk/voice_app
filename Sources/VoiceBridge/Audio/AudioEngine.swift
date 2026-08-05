@@ -88,17 +88,30 @@ final class AudioEngine: ObservableObject {
         converter = new
     }
 
-    func start(inputDevice: AudioDevice?, outputDevice: AudioDevice?) {
+    func start(inputDevice: AudioDevice?, outputDevice: AudioDevice?,
+               builtInInput: AudioDevice? = nil, builtInOutput: AudioDevice? = nil) {
         guard !engine.isRunning else { return }
+
+        // Ordered (input, output) device candidates; nil = don't force, letting
+        // AVAudioEngine use the current system default. We progressively fall
+        // back toward the always-present built-in devices, then to full
+        // defaults, so a stale/unusable selection (e.g. a phantom Bluetooth
+        // output that appears via Find My) cannot block starting.
+        let raw: [(AudioDeviceID?, AudioDeviceID?)] = [
+            (inputDevice?.id, outputDevice?.id),
+            (inputDevice?.id ?? builtInInput?.id, builtInOutput?.id),
+            (builtInInput?.id, builtInOutput?.id),
+            (nil, nil),
+        ]
+        var seen = Set<String>()
+        let candidates = raw.filter {
+            seen.insert("\(String(describing: $0.0))-\(String(describing: $0.1))").inserted
+        }
+
         var lastError: Error?
-        // Attempt 1 honours the user's selected devices. Attempt 2 falls back to
-        // the system-default devices, which is the most compatible setup — this
-        // rescues the common case where a selected device is stale or unusable
-        // (e.g. an output that shows "driver not found").
-        for useDefaults in [false, true] {
+        for (inID, outID) in candidates {
             do {
-                try attemptStart(inputDevice: useDefaults ? nil : inputDevice,
-                                 outputDevice: useDefaults ? nil : outputDevice)
+                try attemptStart(inputID: inID, outputID: outID)
                 status = .running
                 return
             } catch {
@@ -110,8 +123,8 @@ final class AudioEngine: ObservableObject {
                         + (lastError?.localizedDescription ?? "unknown error"))
     }
 
-    private func attemptStart(inputDevice: AudioDevice?, outputDevice: AudioDevice?) throws {
-        try configureGraph(inputDevice: inputDevice, outputDevice: outputDevice)
+    private func attemptStart(inputID: AudioDeviceID?, outputID: AudioDeviceID?) throws {
+        try configureGraph(inputID: inputID, outputID: outputID)
         startWorker()
         try engine.start()
         startUITimer()
@@ -159,7 +172,7 @@ final class AudioEngine: ObservableObject {
 
     // MARK: - Graph configuration
 
-    private func configureGraph(inputDevice: AudioDevice?, outputDevice: AudioDevice?) throws {
+    private func configureGraph(inputID: AudioDeviceID?, outputID: AudioDeviceID?) throws {
         // NOTE: driving input from one Core Audio device and output to a
         // *different* one (built-in mic → virtual mic) through a single
         // AVAudioEngine relies on the two devices staying clock-aligned. For a
@@ -167,11 +180,11 @@ final class AudioEngine: ObservableObject {
         // rendering AUHAL pair with sample-rate conversion (see
         // docs/ARCHITECTURE.md §5). AVAudioEngine is used here for a clear,
         // correct first version.
-        // Force a specific device only when one was chosen. When nil (the
-        // fallback attempt), we force nothing and let AVAudioEngine use the
-        // system defaults — the canonical, most-compatible monitoring setup.
-        if let dev = inputDevice { try setDevice(dev.id, isInput: true) }
-        if let dev = outputDevice { try setDevice(dev.id, isInput: false) }
+        // Force a specific device only when an ID was given. When nil, we force
+        // nothing and let AVAudioEngine use the current system default — the
+        // canonical, most-compatible monitoring setup.
+        if let inID = inputID { try setDevice(inID, isInput: true) }
+        if let outID = outputID { try setDevice(outID, isInput: false) }
 
         let input = engine.inputNode
         let hwFormat = input.outputFormat(forBus: 0)
