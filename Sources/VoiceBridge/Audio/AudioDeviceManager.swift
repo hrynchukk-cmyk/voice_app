@@ -49,6 +49,15 @@ final class AudioDeviceManager: ObservableObject {
         inputDevices.first
     }
 
+    /// The system default output (the user's active speakers/headphones), else
+    /// the built-in output, else anything — so we never default to a stale or
+    /// unusable device.
+    func defaultOutput() -> AudioDevice? {
+        Self.defaultDevice(input: false).flatMap { id in outputDevices.first { $0.id == id } } ??
+        outputDevices.first(where: { $0.isBuiltIn }) ??
+        outputDevices.first
+    }
+
     /// Look up a device the "VoiceBridge Microphone" virtual driver, by name.
     func virtualOutput(named needle: String = "VoiceBridge") -> AudioDevice? {
         outputDevices.first { $0.name.localizedCaseInsensitiveContains(needle) }

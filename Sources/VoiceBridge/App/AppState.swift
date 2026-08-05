@@ -36,7 +36,7 @@ final class AppState: ObservableObject {
 
     init() {
         selectedInput = devices.defaultInput()
-        selectedOutput = devices.virtualOutput() ?? devices.outputDevices.first
+        selectedOutput = devices.virtualOutput() ?? devices.defaultOutput()
         engine.nativeConverter.pitchRatio = Float(voicePitch)
 
         // React to hot-plug: if our input vanished, tell the engine.

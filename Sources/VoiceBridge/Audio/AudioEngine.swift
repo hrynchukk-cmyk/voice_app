@@ -90,19 +90,40 @@ final class AudioEngine: ObservableObject {
 
     func start(inputDevice: AudioDevice?, outputDevice: AudioDevice?) {
         guard !engine.isRunning else { return }
-        do {
-            try configureGraph(inputDevice: inputDevice, outputDevice: outputDevice)
-            startWorker()
-            try engine.start()
-            startUITimer()
-            status = .running
-        } catch {
-            status = .error("Could not start audio: \(error.localizedDescription)")
-            stop()
+        var lastError: Error?
+        // Attempt 1 honours the user's selected devices. Attempt 2 falls back to
+        // the system-default devices, which is the most compatible setup — this
+        // rescues the common case where a selected device is stale or unusable
+        // (e.g. an output that shows "driver not found").
+        for useDefaults in [false, true] {
+            do {
+                try attemptStart(inputDevice: useDefaults ? nil : inputDevice,
+                                 outputDevice: useDefaults ? nil : outputDevice)
+                status = .running
+                return
+            } catch {
+                lastError = error
+                teardown()
+            }
         }
+        status = .error("Could not start audio: "
+                        + (lastError?.localizedDescription ?? "unknown error"))
+    }
+
+    private func attemptStart(inputDevice: AudioDevice?, outputDevice: AudioDevice?) throws {
+        try configureGraph(inputDevice: inputDevice, outputDevice: outputDevice)
+        startWorker()
+        try engine.start()
+        startUITimer()
     }
 
     func stop() {
+        teardown()
+        if case .error = status {} else { status = .idle }
+    }
+
+    /// Tear the graph down without touching `status`, so `start` can retry.
+    private func teardown() {
         engine.stop()
         stopWorker()
         uiTimer?.invalidate(); uiTimer = nil
@@ -111,7 +132,19 @@ final class AudioEngine: ObservableObject {
         sinkNode = nil; sourceNode = nil
         inputRing.reset(); outputRing.reset()
         limiter.reset(); vad.reset()
-        if case .error = status {} else { status = .idle }
+        // Clear any device we forced this run, so the next (fallback) attempt
+        // starts from the clean system-default state.
+        resetDevicesToDefault()
+    }
+
+    /// Best-effort: point both AUHAL units back at the system default devices.
+    private func resetDevicesToDefault() {
+        if let inID = Self.defaultDeviceID(input: true) {
+            try? setDevice(inID, isInput: true)
+        }
+        if let outID = Self.defaultDeviceID(input: false) {
+            try? setDevice(outID, isInput: false)
+        }
     }
 
     /// Called by AudioDeviceManager's hot-plug notification when the selected
@@ -134,6 +167,9 @@ final class AudioEngine: ObservableObject {
         // rendering AUHAL pair with sample-rate conversion (see
         // docs/ARCHITECTURE.md §5). AVAudioEngine is used here for a clear,
         // correct first version.
+        // Force a specific device only when one was chosen. When nil (the
+        // fallback attempt), we force nothing and let AVAudioEngine use the
+        // system defaults — the canonical, most-compatible monitoring setup.
         if let dev = inputDevice { try setDevice(dev.id, isInput: true) }
         if let dev = outputDevice { try setDevice(dev.id, isInput: false) }
 
@@ -185,6 +221,20 @@ final class AudioEngine: ObservableObject {
         if status != noErr {
             throw NSError(domain: NSOSStatusErrorDomain, code: Int(status))
         }
+    }
+
+    /// The system default input/output device ID, used as a compatible fallback.
+    private static func defaultDeviceID(input: Bool) -> AudioDeviceID? {
+        var address = AudioObjectPropertyAddress(
+            mSelector: input ? kAudioHardwarePropertyDefaultInputDevice
+                             : kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        var id = AudioDeviceID(0)
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        let st = AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &id)
+        return (st == noErr && id != 0) ? id : nil
     }
 
     // MARK: - Real-time callbacks (audio threads — no allocations/locks)
