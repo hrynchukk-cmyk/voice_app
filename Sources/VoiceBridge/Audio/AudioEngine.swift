@@ -58,8 +58,14 @@ final class AudioEngine: ObservableObject {
         converter = nativeConverter
     }
 
-    // MARK: AVAudioEngine graph
-    private let engine = AVAudioEngine()
+    // MARK: AVAudioEngine graphs
+    // Two independent engines bridged by the ring buffers: one input-only
+    // (captures the default mic via a tap) and one output-only (renders to the
+    // default output). This sidesteps AVAudioEngine's inability to run
+    // full-duplex across two different Core Audio devices — each engine uses a
+    // single device — and needs no fragile device forcing.
+    private let inputEngine = AVAudioEngine()
+    private let outputEngine = AVAudioEngine()
     private var sourceNode: AVAudioSourceNode?
     private var tapInstalled = false
     private var sampleRate: Double = 48_000
@@ -90,44 +96,51 @@ final class AudioEngine: ObservableObject {
 
     func start(inputDevice: AudioDevice?, outputDevice: AudioDevice?,
                builtInInput: AudioDevice? = nil, builtInOutput: AudioDevice? = nil) {
-        guard !engine.isRunning else { return }
-
-        // Ordered (input, output) device candidates; nil = don't force, letting
-        // AVAudioEngine use the current system default. We progressively fall
-        // back toward the always-present built-in devices, then to full
-        // defaults, so a stale/unusable selection (e.g. a phantom Bluetooth
-        // output that appears via Find My) cannot block starting.
-        let raw: [(AudioDeviceID?, AudioDeviceID?)] = [
-            (inputDevice?.id, outputDevice?.id),
-            (inputDevice?.id ?? builtInInput?.id, builtInOutput?.id),
-            (builtInInput?.id, builtInOutput?.id),
-            (nil, nil),
-        ]
-        var seen = Set<String>()
-        let candidates = raw.filter {
-            seen.insert("\(String(describing: $0.0))-\(String(describing: $0.1))").inserted
+        guard !inputEngine.isRunning, !outputEngine.isRunning else { return }
+        // Routing is driven by the macOS system defaults (Sound settings): the
+        // input engine captures the default input, the output engine renders to
+        // the default output. In-app device routing (incl. the virtual mic)
+        // returns in Phase 2; the parameters are kept for that wiring.
+        _ = (inputDevice, outputDevice, builtInInput, builtInOutput)
+        do {
+            try configureAndStart()
+            startWorker()
+            startUITimer()
+            status = .running
+        } catch {
+            status = .error("Could not start audio: \(error.localizedDescription)")
+            stop()
         }
-
-        var lastError: Error?
-        for (inID, outID) in candidates {
-            do {
-                try attemptStart(inputID: inID, outputID: outID)
-                status = .running
-                return
-            } catch {
-                lastError = error
-                teardown()
-            }
-        }
-        status = .error("Could not start audio: "
-                        + (lastError?.localizedDescription ?? "unknown error"))
     }
 
-    private func attemptStart(inputID: AudioDeviceID?, outputID: AudioDeviceID?) throws {
-        try configureGraph(inputID: inputID, outputID: outputID)
-        startWorker()
-        try engine.start()
-        startUITimer()
+    private func configureAndStart() throws {
+        // --- Input engine: capture the default mic via a tap into inputRing. ---
+        let inFormat = inputEngine.inputNode.outputFormat(forBus: 0)
+        sampleRate = inFormat.sampleRate > 0 ? inFormat.sampleRate : 48_000
+        inputEngine.inputNode.installTap(onBus: 0, bufferSize: 1024, format: inFormat) {
+            [weak self] buffer, _ in self?.captureFromTap(buffer)
+        }
+        tapInstalled = true
+        inputEngine.prepare()
+        try inputEngine.start()
+
+        // --- Output engine: render outputRing to the default output. The mono
+        //     source runs at the capture rate; the mixer resamples to the output
+        //     device's rate, so a mic/output sample-rate difference is fine. ---
+        guard let procFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32,
+                                             sampleRate: sampleRate,
+                                             channels: 1,
+                                             interleaved: false) else {
+            throw NSError(domain: "VoiceBridge", code: -1)
+        }
+        let source = AVAudioSourceNode(format: procFormat) { [weak self] silence, _, frameCount, ablPtr in
+            self?.renderBlock(silence: silence, frameCount: frameCount, abl: ablPtr) ?? noErr
+        }
+        outputEngine.attach(source)
+        outputEngine.connect(source, to: outputEngine.mainMixerNode, format: procFormat)
+        sourceNode = source
+        outputEngine.prepare()
+        try outputEngine.start()
     }
 
     func stop() {
@@ -135,122 +148,23 @@ final class AudioEngine: ObservableObject {
         if case .error = status {} else { status = .idle }
     }
 
-    /// Tear the graph down without touching `status`, so `start` can retry.
+    /// Tear both engines down without touching `status`.
     private func teardown() {
-        engine.stop()
+        inputEngine.stop()
+        outputEngine.stop()
         stopWorker()
         uiTimer?.invalidate(); uiTimer = nil
-        if tapInstalled { engine.inputNode.removeTap(onBus: 0); tapInstalled = false }
-        if let s = sourceNode { engine.detach(s) }
+        if tapInstalled { inputEngine.inputNode.removeTap(onBus: 0); tapInstalled = false }
+        if let s = sourceNode { outputEngine.detach(s) }
         sourceNode = nil
         inputRing.reset(); outputRing.reset()
         limiter.reset(); vad.reset()
-        // Clear any device we forced this run, so the next (fallback) attempt
-        // starts from the clean system-default state.
-        resetDevicesToDefault()
     }
 
-    /// Best-effort: point both AUHAL units back at the system default devices.
-    private func resetDevicesToDefault() {
-        if let inID = Self.defaultDeviceID(input: true) {
-            try? setDevice(inID, isInput: true)
-        }
-        if let outID = Self.defaultDeviceID(input: false) {
-            try? setDevice(outID, isInput: false)
-        }
-    }
-
-    /// Called by AudioDeviceManager's hot-plug notification when the selected
-    /// device may have disappeared.
-    func handleDeviceChange(currentInput: AudioDevice?, available: [AudioDevice]) {
-        guard engine.isRunning, let input = currentInput else { return }
-        if !available.contains(where: { $0.id == input.id }) {
-            status = .error("The selected microphone was disconnected.")
-            stop()
-        }
-    }
-
-    // MARK: - Graph configuration
-
-    private func configureGraph(inputID: AudioDeviceID?, outputID: AudioDeviceID?) throws {
-        // NOTE: driving input from one Core Audio device and output to a
-        // *different* one (built-in mic → virtual mic) through a single
-        // AVAudioEngine relies on the two devices staying clock-aligned. For a
-        // robust release, back this with an **aggregate device** or a manual-
-        // rendering AUHAL pair with sample-rate conversion (see
-        // docs/ARCHITECTURE.md §5). AVAudioEngine is used here for a clear,
-        // correct first version.
-        // Force a specific device only when an ID was given. When nil, we force
-        // nothing and let AVAudioEngine use the current system default — the
-        // canonical, most-compatible monitoring setup.
-        if let inID = inputID { try setDevice(inID, isInput: true) }
-        if let outID = outputID { try setDevice(outID, isInput: false) }
-
-        let input = engine.inputNode
-        let hwFormat = input.outputFormat(forBus: 0)
-        sampleRate = hwFormat.sampleRate > 0 ? hwFormat.sampleRate : 48_000
-
-        // Mono Float32 processing format at the hardware rate.
-        guard let procFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32,
-                                             sampleRate: sampleRate,
-                                             channels: 1,
-                                             interleaved: false) else {
-            throw NSError(domain: "VoiceBridge", code: -1)
-        }
-
-        // --- Output: source node renders outputRing to the output device. ---
-        // This is the ONLY chain connected to the output node, so the engine
-        // reliably drives it. (An input→sink chain here could leave the output
-        // subgraph unpulled on full-duplex/aggregate devices, giving silence.)
-        let source = AVAudioSourceNode(format: procFormat) { [weak self] silence, _, frameCount, ablPtr in
-            self?.renderBlock(silence: silence, frameCount: frameCount, abl: ablPtr) ?? noErr
-        }
-        engine.attach(source)
-        engine.connect(source, to: engine.mainMixerNode, format: procFormat)
-        self.sourceNode = source
-
-        // --- Input: capture mic frames into inputRing via a tap. The tap pulls
-        // the input independently, without adding a second connected chain. ---
-        input.installTap(onBus: 0, bufferSize: 1024, format: hwFormat) { [weak self] buffer, _ in
-            self?.captureFromTap(buffer)
-        }
-        tapInstalled = true
-
-        engine.prepare()
-    }
-
-    /// Route the engine's input/output through a specific Core Audio device by
-    /// setting kAudioOutputUnitProperty_CurrentDevice on the AUHAL unit. This is
-    /// how output is pointed at the "VoiceBridge Microphone" virtual device.
-    private func setDevice(_ deviceID: AudioDeviceID, isInput: Bool) throws {
-        let node = isInput ? engine.inputNode : engine.outputNode
-        guard let unit = node.audioUnit else { return }
-        var dev = deviceID
-        let status = AudioUnitSetProperty(
-            unit,
-            kAudioOutputUnitProperty_CurrentDevice,
-            kAudioUnitScope_Global,
-            0,
-            &dev,
-            UInt32(MemoryLayout<AudioDeviceID>.size))
-        if status != noErr {
-            throw NSError(domain: NSOSStatusErrorDomain, code: Int(status))
-        }
-    }
-
-    /// The system default input/output device ID, used as a compatible fallback.
-    private static func defaultDeviceID(input: Bool) -> AudioDeviceID? {
-        var address = AudioObjectPropertyAddress(
-            mSelector: input ? kAudioHardwarePropertyDefaultInputDevice
-                             : kAudioHardwarePropertyDefaultOutputDevice,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain)
-        var id = AudioDeviceID(0)
-        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
-        let st = AudioObjectGetPropertyData(
-            AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &id)
-        return (st == noErr && id != 0) ? id : nil
-    }
+    /// Called by AudioDeviceManager's hot-plug notification. With system-default
+    /// routing, Core Audio follows the new default device, so there is nothing
+    /// to reconfigure here; kept for the Phase 2 in-app routing.
+    func handleDeviceChange(currentInput: AudioDevice?, available: [AudioDevice]) {}
 
     // MARK: - Real-time callbacks (audio threads — no allocations/locks)
 
@@ -372,7 +286,7 @@ final class AudioEngine: ObservableObject {
         guard active != isInFallback else { return }
         isInFallback = active
         DispatchQueue.main.async { [weak self] in
-            guard let self, self.engine.isRunning else { return }
+            guard let self, self.outputEngine.isRunning else { return }
             self.status = active ? .bypassFallback(reason: reason) : .running
         }
     }

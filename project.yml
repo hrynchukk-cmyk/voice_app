@@ -36,13 +36,16 @@ targets:
     entitlements:
       path: App/VoiceBridge.entitlements
       properties:
-        com.apple.security.app-sandbox: true
+        # Sandbox is DISABLED for local development. Under the sandbox, Core
+        # Audio hits a precondition failure (mach-lookup to audioanalyticsd) and
+        # device access is restricted, which broke live monitoring. For a
+        # shipping build, re-enable app-sandbox and add the required
+        # temporary-exception mach-lookup entitlements — see
+        # docs/PERMISSIONS_AND_SIGNING.md.
+        com.apple.security.app-sandbox: false
         com.apple.security.device.audio-input: true
         # Read/write access to user-selected voice-model files during import.
         com.apple.security.files.user-selected.read-write: true
-        # No outbound network client by default — conversion is local.
-        # Add com.apple.security.network.client ONLY if you later add an
-        # explicit, user-visible online feature.
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.example.VoiceBridge
