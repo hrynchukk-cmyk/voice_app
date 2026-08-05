@@ -56,15 +56,40 @@ def frame_rms(audio: np.ndarray, frame: int) -> np.ndarray:
     return np.sqrt(np.mean(frames.astype(np.float64) ** 2, axis=1))
 
 
+def bridge_short_gaps(voiced: np.ndarray, min_gap_frames: int) -> np.ndarray:
+    """Fill internal silence runs shorter than `min_gap_frames` with speech.
+
+    Speech is full of sub-second gaps — between words, before plosives, during
+    unvoiced consonants. Splitting on every one of them shreds continuous
+    speech into unusable slivers, so only a genuinely long pause separates two
+    utterances. Leading and trailing silence is left alone.
+    """
+    out = voiced.copy()
+    n = out.size
+    i = 0
+    while i < n:
+        if out[i]:
+            i += 1
+            continue
+        j = i
+        while j < n and not out[j]:
+            j += 1
+        if i > 0 and j < n and (j - i) < min_gap_frames:
+            out[i:j] = True          # internal, short → part of the utterance
+        i = j
+    return out
+
+
 def split_on_silence(audio: np.ndarray, sr: int, *, top_db: float,
                      min_speech_s: float, max_len_s: float,
-                     noise_floor_db: float = -50.0) -> list[np.ndarray]:
-    """Split into speech segments separated by silence.
+                     min_silence_s: float = 0.35, pad_s: float = 0.1,
+                     silence_floor_db: float = -50.0) -> list[np.ndarray]:
+    """Split into speech segments separated by *real* pauses.
 
     The threshold is relative to the clip's own loudness (top_db below the peak
-    frame) so it adapts to quiet and loud recordings — but it is also floored at
-    an absolute level, otherwise a silent recording's own noise sits above its
-    own relative threshold and the whole file is mistaken for speech.
+    frame) so it adapts to quiet and loud recordings. A whole-file guard rejects
+    recordings that are silent throughout — without it, a silent file's own
+    noise sits above its own relative threshold and is mistaken for speech.
     """
     frame = max(1, sr // 100)                      # 10 ms analysis frames
     rms = frame_rms(audio, frame)
@@ -72,27 +97,36 @@ def split_on_silence(audio: np.ndarray, sr: int, *, top_db: float,
         return []
 
     peak = float(rms.max())
-    if peak <= 0:
+    # Whole-file silence guard: if even the loudest frame is near-silent, there
+    # is no speech here. Applied to the file, not per frame, so that quiet
+    # speech endings are not mistaken for silence.
+    if peak <= 0 or peak < 10.0 ** (silence_floor_db / 20.0):
         return []
-    absolute_floor = 10.0 ** (noise_floor_db / 20.0)
-    threshold = max(peak * (10.0 ** (-top_db / 20.0)), absolute_floor)
-    voiced = rms > threshold
+
+    threshold = peak * (10.0 ** (-top_db / 20.0))
+    voiced = bridge_short_gaps(rms > threshold,
+                               max(1, int(min_silence_s * sr / frame)))
 
     segments: list[np.ndarray] = []
     max_len = int(max_len_s * sr)
     min_speech = int(min_speech_s * sr)
+    pad = int(pad_s * sr)
+
+    def flush(first_frame: int, last_frame: int) -> None:
+        # Pad outward so word onsets and decays aren't clipped off.
+        begin = max(0, first_frame * frame - pad)
+        end = min(len(audio), last_frame * frame + pad)
+        segments.extend(_emit(audio, begin, end, max_len, min_speech))
 
     start: int | None = None
     for i, is_voiced in enumerate(voiced):
         if is_voiced and start is None:
             start = i
         elif not is_voiced and start is not None:
-            segments.extend(
-                _emit(audio, start * frame, i * frame, max_len, min_speech))
+            flush(start, i)
             start = None
     if start is not None:
-        segments.extend(
-            _emit(audio, start * frame, len(voiced) * frame, max_len, min_speech))
+        flush(start, voiced.size)
     return segments
 
 
@@ -136,9 +170,11 @@ def main() -> int:
                     help="drop speech segments shorter than this (default 1.0 s)")
     ap.add_argument("--top-db", type=float, default=35.0,
                     help="silence threshold in dB below the clip peak (default 35)")
-    ap.add_argument("--noise-floor-db", type=float, default=-50.0,
-                    help="absolute dBFS floor below which audio is never speech "
-                         "(default -50; guards against all-silence files)")
+    ap.add_argument("--min-silence", type=float, default=0.35,
+                    help="a pause must last this long (s) to split an utterance "
+                         "(default 0.35; raise it if clips come out chopped)")
+    ap.add_argument("--pad", type=float, default=0.1,
+                    help="seconds of context kept around each segment (default 0.1)")
     ap.add_argument("--overwrite", action="store_true",
                     help="clear the output folder first")
     args = ap.parse_args()
@@ -179,7 +215,8 @@ def main() -> int:
         segments = split_on_silence(audio, args.sr, top_db=args.top_db,
                                     min_speech_s=args.min_len,
                                     max_len_s=args.max_len,
-                                    noise_floor_db=args.noise_floor_db)
+                                    min_silence_s=args.min_silence,
+                                    pad_s=args.pad)
         for seg in segments:
             if clipping_ratio(seg) > 0.01:      # >1% samples pinned = distorted
                 dropped_clipped += 1
@@ -200,13 +237,23 @@ def main() -> int:
                     "items": manifest}, indent=2))
 
     minutes = kept_s / 60.0
+    retention = (kept_s / total_in * 100.0) if total_in > 0 else 0.0
+    avg_clip = (kept_s / written) if written else 0.0
     print("\n" + "=" * 58)
     print(f"Input audio      : {total_in / 60:.1f} min across {len(files)} file(s)")
-    print(f"Usable speech    : {minutes:.1f} min in {written} clip(s)")
+    print(f"Usable speech    : {minutes:.1f} min in {written} clip(s) "
+          f"({retention:.0f}% kept, avg {avg_clip:.1f}s)")
     if dropped_clipped:
         print(f"Dropped (clipped): {dropped_clipped} segment(s)")
     print(f"Output folder    : {args.output}")
     print("=" * 58)
+
+    # Continuous speech should yield multi-second clips. Short ones mean the
+    # splitter is cutting mid-utterance, which silently throws speech away.
+    if written and (avg_clip < 2.0 or retention < 50.0):
+        print("NOTE: clips are short / much audio was dropped — the recording is")
+        print("      likely being split mid-sentence. Retry with a longer pause")
+        print("      threshold, e.g. --min-silence 0.6 (and --min-len 0.7).")
 
     # The verdict — the reason this script exists.
     if minutes < 1:
