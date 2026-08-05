@@ -23,7 +23,7 @@ enum EngineStatus: Equatable {
 /// The real-time audio engine.
 ///
 /// Path (see docs/ARCHITECTURE.md §5):
-///   mic → AVAudioSinkNode ──▶ inputRing ──▶ worker(convert) ──▶ outputRing ──▶ AVAudioSourceNode → output
+///   mic → input tap ──▶ inputRing ──▶ worker(convert) ──▶ outputRing ──▶ AVAudioSourceNode → output
 ///
 /// The two render callbacks only touch ring buffers and cheap DSP; the
 /// (potentially slow) conversion runs on a dedicated worker so a slow/failed
@@ -60,8 +60,8 @@ final class AudioEngine: ObservableObject {
 
     // MARK: AVAudioEngine graph
     private let engine = AVAudioEngine()
-    private var sinkNode: AVAudioSinkNode?
     private var sourceNode: AVAudioSourceNode?
+    private var tapInstalled = false
     private var sampleRate: Double = 48_000
 
     // MARK: Buffers shared across threads
@@ -140,9 +140,9 @@ final class AudioEngine: ObservableObject {
         engine.stop()
         stopWorker()
         uiTimer?.invalidate(); uiTimer = nil
-        if let s = sinkNode { engine.detach(s) }
+        if tapInstalled { engine.inputNode.removeTap(onBus: 0); tapInstalled = false }
         if let s = sourceNode { engine.detach(s) }
-        sinkNode = nil; sourceNode = nil
+        sourceNode = nil
         inputRing.reset(); outputRing.reset()
         limiter.reset(); vad.reset()
         // Clear any device we forced this run, so the next (fallback) attempt
@@ -198,21 +198,23 @@ final class AudioEngine: ObservableObject {
             throw NSError(domain: "VoiceBridge", code: -1)
         }
 
-        // --- Input: sink node captures mic frames into inputRing. ---
-        let sink = AVAudioSinkNode { [weak self] _, frameCount, ablPtr in
-            self?.captureBlock(frameCount: frameCount, abl: ablPtr) ?? noErr
-        }
-        engine.attach(sink)
-        engine.connect(input, to: sink, format: hwFormat)
-        self.sinkNode = sink
-
         // --- Output: source node renders outputRing to the output device. ---
+        // This is the ONLY chain connected to the output node, so the engine
+        // reliably drives it. (An input→sink chain here could leave the output
+        // subgraph unpulled on full-duplex/aggregate devices, giving silence.)
         let source = AVAudioSourceNode(format: procFormat) { [weak self] silence, _, frameCount, ablPtr in
             self?.renderBlock(silence: silence, frameCount: frameCount, abl: ablPtr) ?? noErr
         }
         engine.attach(source)
         engine.connect(source, to: engine.mainMixerNode, format: procFormat)
         self.sourceNode = source
+
+        // --- Input: capture mic frames into inputRing via a tap. The tap pulls
+        // the input independently, without adding a second connected chain. ---
+        input.installTap(onBus: 0, bufferSize: 1024, format: hwFormat) { [weak self] buffer, _ in
+            self?.captureFromTap(buffer)
+        }
+        tapInstalled = true
 
         engine.prepare()
     }
@@ -252,13 +254,11 @@ final class AudioEngine: ObservableObject {
 
     // MARK: - Real-time callbacks (audio threads — no allocations/locks)
 
-    private func captureBlock(frameCount: AVAudioFrameCount,
-                              abl: UnsafePointer<AudioBufferList>) -> OSStatus {
-        let buffers = UnsafeMutableAudioBufferListPointer(
-            UnsafeMutablePointer(mutating: abl))
-        guard let mData = buffers.first?.mData else { return noErr }
-        let n = Int(frameCount)
-        let ptr = mData.assumingMemoryBound(to: Float.self)
+    private func captureFromTap(_ buffer: AVAudioPCMBuffer) {
+        guard let channels = buffer.floatChannelData else { return }
+        let n = Int(buffer.frameLength)
+        guard n > 0 else { return }
+        let ptr = channels[0]   // channel 0 (mono capture)
 
         // Apply input gain in place.
         if inputGain != 1.0 {
@@ -266,13 +266,10 @@ final class AudioEngine: ObservableObject {
         }
         let bufPtr = UnsafeBufferPointer(start: ptr, count: n)
 
-        // Meter the (gained) input.
+        // Meter the (gained) input, then publish dry frames to the worker.
         inSnapshot = meter.measure(bufPtr)
-
-        // Publish dry frames to the worker.
         inputRing.write(bufPtr)
         workSignal.signal()
-        return noErr
     }
 
     private func renderBlock(silence: UnsafeMutablePointer<ObjCBool>,
