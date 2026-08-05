@@ -49,6 +49,7 @@ ready-to-open starting point, not a shipped binary. See
 | [`docs/LIBRARIES.md`](docs/LIBRARIES.md) | Open-source libraries, licenses, commercial suitability |
 | [`docs/PERMISSIONS_AND_SIGNING.md`](docs/PERMISSIONS_AND_SIGNING.md) | TCC permissions, code signing, sandboxing, virtual-driver notarization |
 | [`docs/VOICE_MODELS.md`](docs/VOICE_MODELS.md) | Enrollment/import workflow and consent gating |
+| [`docs/TRAINING_RVC.md`](docs/TRAINING_RVC.md) | Phase 3 step 1: collecting audio and training a voice model |
 | [`docs/TESTING.md`](docs/TESTING.md) | Local recording-based test plan before any real meeting |
 | [`VirtualDevice/README.md`](VirtualDevice/README.md) | Virtual audio device options (Audio Server Plug-In / DriverKit / BlackHole) |
 | [`ml/README.md`](ml/README.md) | Reference real-time conversion backend (Python/ONNX) |

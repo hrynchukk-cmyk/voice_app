@@ -39,6 +39,18 @@ supervised by the app as a child process.
 `server.py` here is a **stub** that documents the protocol and passes audio
 through unchanged. Replace the `convert()` body with real inference.
 
+## Dataset preparation
+
+`prepare_dataset.py` turns raw recordings into the clean, uniform clips RVC
+training expects, and reports whether there is enough usable speech before you
+spend time on a GPU. See [`../docs/TRAINING_RVC.md`](../docs/TRAINING_RVC.md)
+for the full training walkthrough.
+
+```bash
+pip install numpy soundfile        # plus ffmpeg on PATH
+python prepare_dataset.py --input ~/Desktop/yaroslav_raw --output dataset/yaroslav
+```
+
 ## Local setup
 
 ```bash
