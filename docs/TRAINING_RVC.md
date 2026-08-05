@@ -102,24 +102,39 @@ in them will be faithfully learned by the model.
 
 Training needs a CUDA GPU to be practical. Two options:
 
-### A. Google Colab (recommended — free GPU, no local setup)
+### A. Google Colab via Applio (recommended — free GPU, no local setup)
 
-1. Zip the prepared clips: `zip -r yaroslav.zip dataset/yaroslav`
-2. Open a maintained **RVC v2 training notebook** (search "RVC WebUI training
-   Colab"; the `RVC-Project/Retrieval-based-Voice-Conversion-WebUI` repo links
-   current ones). Notebooks rot — prefer one updated recently.
-3. Runtime ▸ Change runtime type ▸ **GPU**.
-4. Upload the zip, point the *dataset path* at the unzipped folder.
-5. Settings that matter:
-   - **Sample rate**: `40k` — must match `--sr` from step 2.
+[Applio](https://github.com/IAHispano/Applio) is an RVC distribution with a web
+UI. Its Colab notebook is a **launcher**: the cells install it and start a Gradio
+server; the actual training happens in that web UI (it has Dataset Path,
+Preprocess, Extract, Train and Generate Index).
+
+Notebook: <https://colab.research.google.com/github/iahispano/applio/blob/main/assets/Applio.ipynb>
+
+1. Put the prepared clips where Colab can read them — simplest is Google Drive:
+   upload the `dataset/<name>/` folder to your Drive.
+2. Open the notebook, then **Runtime ▸ Change runtime type ▸ GPU**.
+3. Run the cells in order: *Mount Drive* → *Setup Runtime Environment* (a few
+   minutes) → *Start Server*. Open the URL it prints.
+4. In the Applio UI, **Train** tab:
+   - **Dataset Path**: the Drive folder from step 1.
+   - **Sample rate**: `40k` — must match `--sr` from step 2 of this guide.
    - **Version**: `v2`
-   - **f0 (pitch) extraction**: `rmvpe` — best quality/robustness today.
-   - **Epochs**: start at **100–200**. More is not better; it overfits.
-   - **Batch size**: whatever fits the GPU (Colab T4: 8 or so).
-6. Train. Roughly **30–90 min** for ~10–20 min of audio on a T4.
-7. Download two files — you need **both**:
+   - **f0 / pitch extraction**: `rmvpe` — best quality/robustness today.
+   - **Epochs**: start at **150**. More is not better; it overfits.
+   - **Batch size**: whatever fits the GPU (Colab T4: ~8).
+5. Run **Preprocess** → **Extract Features** → **Train** → **Generate Index**.
+   Roughly **40–90 min** for ~10–20 min of audio on a T4.
+6. Download two files — you need **both**:
    - `<name>.pth` — the model weights
    - `added_*.index` — the retrieval index (improves similarity)
+
+> Colab notebooks for RVC break often as Python/torch move. If the setup cell
+> fails, [`webvijayi/rvc-free-colab`](https://github.com/webvijayi/rvc-free-colab)
+> carries patches for training RVC v2 on current Colab (Python 3.12 / numpy 2.x
+> / torch 2.x, fairseq removed), applied on top of the
+> [`ardha27/AI-Song-Cover-RVC`](https://github.com/ardha27/AI-Song-Cover-RVC)
+> notebook.
 
 ### B. Locally on Apple Silicon
 
